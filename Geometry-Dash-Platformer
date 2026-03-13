@@ -1,0 +1,160 @@
+(function() {
+    const oldCanvas = document.querySelector('canvas');
+    if (oldCanvas) oldCanvas.remove();
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    document.body.innerHTML = '';
+    document.body.appendChild(canvas);
+    document.documentElement.style.cssText = 'height:100%; margin:0; overflow:hidden;';
+    document.body.style.cssText = 'height:100%; margin:0; overflow:hidden; background:#000; font-family: "Segoe UI", Arial, sans-serif;';
+    canvas.style.display = 'block';
+
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize);
+    resize();
+
+    let GROUND_Y = canvas.height - 100, CEIL_Y = 100;
+    let gameState = 'MENU', currentLevel = null;
+    let player, objects = [], scrollX = 0, isHolding = false;
+    let isMirrored = false, keys = {};
+
+    const levels = [
+        { name: "1. STEREO MADNESS", mode: 'cube', speed: 9, color: "#0066ff", type: 'main', length: 5000 },
+        { name: "2. BACK ON TRACK", mode: 'cube', speed: 9.5, color: "#ff9900", type: 'main', length: 5500 },
+        { name: "3. POLARGEIST", mode: 'cube', speed: 10, color: "#cc00ff", type: 'main', length: 6000 },
+        { name: "4. DRY OUT", mode: 'cube', speed: 10.5, color: "#ff4444", type: 'main', length: 6500 },
+        { name: "8. TIME MACHINE", mode: 'cube', speed: 12.5, color: "#ff6600", type: 'main', length: 8500 },
+        { name: "9. FREE ROAM", mode: 'cube', speed: 0, color: "#ffff00", type: 'main', length: 4000, controlType: 'manual' },
+        { name: "10. EXPLORER", mode: 'cube', speed: 0, color: "#00ffff", type: 'main', length: 6000, controlType: 'manual' }
+    ];
+
+    function initGame(lvl) {
+        GROUND_Y = canvas.height - 100;
+        currentLevel = lvl;
+        scrollX = 0; isMirrored = false;
+        player = { x: 150, y: GROUND_Y-40, size: 40, vy: 0, vx: 0, gDir: 1, jumpPower: -17, grounded: false, rotation: 0 };
+        objects = generateMainLevel(lvl);
+        gameState = 'PLAYING';
+    }
+
+    function generateMainLevel(lvl) {
+        let temp = [];
+        for (let i = 800; i < lvl.length; i += 350) {
+            const r = Math.random();
+            if (r < 0.3) temp.push({ type: 'spike', x: i, y: GROUND_Y-40 });
+            else if (r < 0.6) temp.push({ type: 'block', x: i, y: GROUND_Y-40 });
+            if (lvl.name.includes("BACK ON TRACK") && r > 0.8) temp.push({ type: 'pad', x: i + 150, y: GROUND_Y-10 });
+            if (lvl.name.includes("POLARGEIST") && r > 0.8) temp.push({ type: 'orb', x: i + 150, y: GROUND_Y-120 });
+            if (lvl.name.includes("DRY OUT") && i > 1500 && i < 1650) temp.push({ type: 'portal', subType: 'gravity', x: i, y: GROUND_Y-150 });
+            if (lvl.name.includes("TIME MACHINE") && i > 1500 && i < 1650) temp.push({ type: 'portal', subType: 'mirror', x: i, y: GROUND_Y-150 });
+        }
+        return temp;
+    }
+
+    function update() {
+        if (gameState !== 'PLAYING') return;
+
+        // X-MOVEMENT LOGIC
+        const moveSpeed = 7;
+        if (currentLevel.controlType === 'manual') {
+            // Full control, camera follows player
+            if (keys['ArrowLeft'] || keys['KeyA']) player.vx = -moveSpeed;
+            else if (keys['ArrowRight'] || keys['KeyD']) player.vx = moveSpeed;
+            else player.vx = 0;
+            player.x += player.vx;
+            scrollX = -player.x + 150;
+        } else {
+            // Auto-scroll + horizontal nudge
+            scrollX -= currentLevel.speed;
+            if (keys['ArrowLeft'] || keys['KeyA']) player.x -= 4;
+            if (keys['ArrowRight'] || keys['KeyD']) player.x += 4;
+            // Prevent player from leaving the screen left
+            if (player.x + scrollX < 0) player.x = -scrollX;
+        }
+        
+        player.vy += 0.9 * player.gDir;
+        player.y += player.vy;
+
+        if (player.gDir === 1 && player.y + 40 >= GROUND_Y) { player.y = GROUND_Y-40; player.vy = 0; player.grounded = true; }
+        else if (player.gDir === -1 && player.y <= CEIL_Y) { player.y = CEIL_Y; player.vy = 0; player.grounded = true; }
+        else player.grounded = false;
+
+        objects.forEach((obj) => {
+            const ox = obj.x; const px = player.x;
+            if (px < ox+40 && px+40 > ox && player.y < obj.y+40 && player.y+40 > obj.y) {
+                if (obj.type === 'spike') gameState = 'MENU';
+                if (obj.type === 'block') {
+                    if (player.y + 30 < obj.y && player.gDir === 1) { player.y = obj.y-40; player.vy = 0; player.grounded = true; }
+                    else if (player.y > obj.y + 30 && player.gDir === -1) { player.y = obj.y+40; player.vy = 0; player.grounded = true; }
+                    else gameState = 'MENU';
+                }
+                if (obj.type === 'pad') player.vy = -20 * player.gDir;
+                if (obj.type === 'orb' && isHolding) { player.vy = -15 * player.gDir; isHolding = false; }
+                if (obj.type === 'portal') {
+                    if (obj.subType === 'gravity') player.gDir *= -1;
+                    if (obj.subType === 'mirror') isMirrored = !isMirrored;
+                    obj.x = -9999;
+                }
+            }
+        });
+        player.rotation = player.grounded ? Math.round(player.rotation/90)*90 : player.rotation+8*player.gDir;
+    }
+
+    function draw() {
+        ctx.save();
+        if (isMirrored) { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
+        ctx.fillStyle = '#050510'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0, GROUND_Y, canvas.width, 100);
+        ctx.fillRect(0, 0, canvas.width, CEIL_Y);
+
+        if (gameState === 'MENU') {
+            ctx.restore();
+            ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.font = 'bold 30px Arial';
+            ctx.fillText('GD: HYBRID CONTROLS', canvas.width/2, 60);
+            levels.forEach((l, i) => {
+                const x = canvas.width/2 - (i % 2 === 0 ? 310 : -10);
+                const y = 100 + Math.floor(i/2) * 60;
+                l.bounds = { x, y, w: 300, h: 50 };
+                ctx.fillStyle = l.color; ctx.fillRect(x, y, 300, 50);
+                ctx.fillStyle = 'white'; ctx.font = 'bold 14px Arial';
+                ctx.fillText(l.name, x + 150, y + 30);
+            });
+        } else {
+            ctx.translate(scrollX, 0);
+            objects.forEach(obj => {
+                const x = obj.x;
+                if (obj.type === 'spike') {
+                    ctx.fillStyle = '#ff4444'; ctx.beginPath();
+                    ctx.moveTo(x, obj.y+40); ctx.lineTo(x+20, obj.y); ctx.lineTo(x+40, obj.y+40); ctx.fill();
+                } else if (obj.type === 'block') {
+                    ctx.fillStyle = '#111'; ctx.strokeStyle = '#00ffff'; ctx.fillRect(x, obj.y, 40, 40); ctx.strokeRect(x, obj.y, 40, 40);
+                } else if (obj.type === 'pad') {
+                    ctx.fillStyle = '#ff0'; ctx.fillRect(x, obj.y+30, 40, 10);
+                } else if (obj.type === 'orb') {
+                    ctx.fillStyle = '#ff0'; ctx.beginPath(); ctx.arc(x+20, obj.y+20, 15, 0, Math.PI*2); ctx.fill();
+                } else if (obj.type === 'portal') {
+                    ctx.fillStyle = obj.subType === 'gravity' ? '#0f0' : '#f0f'; ctx.fillRect(x, obj.y-20, 20, 80);
+                }
+            });
+            ctx.save(); ctx.translate(player.x+20, player.y+20); ctx.rotate(player.rotation * Math.PI/180);
+            ctx.fillStyle = '#00ffff'; ctx.fillRect(-20, -20, 40, 40); ctx.restore();
+            ctx.restore();
+        }
+        update(); requestAnimationFrame(draw);
+    }
+
+    window.onmousedown = (e) => {
+        isHolding = true;
+        if (gameState === 'MENU') {
+            levels.forEach(l => {
+                if (l.bounds && e.clientX > l.bounds.x && e.clientX < l.bounds.x + l.bounds.w && 
+                    e.clientY > l.bounds.y && e.clientY < l.bounds.y + l.bounds.h) initGame(l);
+            });
+        } else if (player.grounded) { player.vy = player.jumpPower * player.gDir; }
+    };
+    window.onmouseup = () => isHolding = false;
+    window.onkeydown = (e) => { keys[e.code] = true; if(e.code==='Space'||e.code==='ArrowUp'||e.code==='KeyW') window.onmousedown(); if(e.code==='Escape') gameState='MENU'; };
+    window.onkeyup = (e) => { keys[e.code] = false; if(e.code==='Space'||e.code==='ArrowUp'||e.code==='KeyW') isHolding = false; };
+    draw();
+})();
