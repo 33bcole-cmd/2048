@@ -1,0 +1,106 @@
+(function() {
+    // Inject HTML Structure
+    document.body.innerHTML = `
+        <div id="gameContainer" style="text-align: center; font-family: sans-serif; padding: 20px; background-color: #f0f0f0; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+            <h1>Draw a Perfect Circle ⭕️</h1>
+            <p>Click and drag to draw. Release the mouse button to score your circle.</p>
+            <canvas id="gameCanvas" style="background-color: #fff; border: 2px solid #333; cursor: crosshair; display: block; margin: 20px auto;"></canvas>
+            <div id="scoreArea" style="font-size: 1.5em; margin-top: 10px;">Score: <span id="scoreValue">0%</span></div>
+            <button id="resetButton" style="padding: 10px 20px; font-size: 1em; cursor: pointer;">Try Again</button>
+        </div>
+    `;
+
+    // Game JavaScript Logic (immediately executed)
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreValue = document.getElementById('scoreValue');
+    const resetButton = document.getElementById('resetButton');
+
+    canvas.width = 500;
+    canvas.height = 500;
+
+    let isDrawing = false;
+    let points = [];
+
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseleave', stopDrawing);
+    resetButton.addEventListener('click', resetCanvas);
+
+    function startDrawing(e) {
+        isDrawing = true;
+        points = [];
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Adjust coordinates for canvas position relative to the viewport
+        const rect = canvas.getBoundingClientRect();
+        ctx.beginPath();
+        ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    }
+
+    function draw(e) {
+        if (!isDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        points.push({ x, y });
+    }
+
+    function stopDrawing() {
+        if (!isDrawing) return;
+        isDrawing = false;
+        ctx.closePath();
+        calculateScore();
+    }
+
+    function calculateScore() {
+        if (points.length < 10) {
+            scoreValue.textContent = "Too few points to score!";
+            return;
+        }
+
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of points) {
+            minX = Math.min(minX, p.x);
+            maxX = Math.max(maxX, p.x);
+            minY = Math.min(minY, p.y);
+            maxY = Math.max(maxY, p.y);
+        }
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        const radius = ((maxX - minX) + (maxY - minY)) / 4; 
+
+        let totalDeviation = 0;
+        for (const p of points) {
+            const distance = Math.sqrt(Math.pow(p.x - centerX, 2) + Math.pow(p.y - centerY, 2));
+            totalDeviation += Math.abs(distance - radius);
+        }
+
+        const averageDeviation = totalDeviation / points.length;
+        const score = Math.max(0, 100 - (averageDeviation * 2)); 
+
+        scoreValue.textContent = `${score.toFixed(2)}%`;
+        drawPerfectCircle(centerX, centerY, radius);
+    }
+
+    function drawPerfectCircle(x, y, r) {
+        ctx.beginPath();
+        ctx.strokeStyle = 'red';
+        ctx.lineWidth = 2;
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.closePath();
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 1;
+    }
+
+    function resetCanvas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        scoreValue.textContent = "0%";
+        points = [];
+    }
+})();
