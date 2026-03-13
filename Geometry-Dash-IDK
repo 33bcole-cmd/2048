@@ -1,0 +1,163 @@
+(function() {
+    const oldCanvas = document.querySelector('canvas');
+    if (oldCanvas) oldCanvas.remove();
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    document.body.innerHTML = '';
+    document.body.appendChild(canvas);
+    document.documentElement.style.cssText = 'height:100%; margin:0; overflow:hidden;';
+    document.body.style.cssText = 'height:100%; margin:0; overflow:hidden; background:#000; font-family: Arial, sans-serif;';
+    canvas.style.display = 'block';
+
+    const GRID = 40;
+    let lastTime = 0, isMirrored = false, isHolding = false;
+    let gameState = 'MENU', customLevelData = [], currentLevel = null;
+    let player, objects = [], scrollX = 0, selectedType = 'block';
+    let GROUND_Y = canvas.height - 100, CEIL_Y = 100;
+
+    const levels = [
+        { name: "1. STEREO MADNESS", mode: 'cube', speed: 9, color: "#0066ff", type: 'main', length: 5000 },
+        { name: "8. TIME MACHINE", mode: 'cube', speed: 10, color: "#ff4444", type: 'main', length: 8000 },
+        { name: "SHIP TEST", mode: 'ship', speed: 10, color: "#4444ff", type: 'main', length: 4000 },
+        { name: "WAVE TEST", mode: 'wave', speed: 12, color: "#00ffcc", type: 'main', length: 4000 },
+        { name: "PLAY CUSTOM", color: "#4ecca3", type: 'custom' },
+        { name: "OPEN EDITOR", color: "#444", type: 'editor' }
+    ];
+
+    function initGame(lvl) {
+        GROUND_Y = canvas.height - 100;
+        currentLevel = lvl;
+        scrollX = 0; isMirrored = false;
+        player = { x: 150, y: GROUND_Y-40, vy: 0, gDir: 1, grounded: false, rotation: 0, mode: lvl.mode || 'cube' };
+        objects = (lvl.type === 'main') ? generateMainLevel(lvl) : (lvl.type === 'custom') ? JSON.parse(localStorage.getItem('gd_custom') || '[]') : customLevelData;
+        gameState = (lvl.type === 'editor') ? 'EDIT' : 'PLAYING';
+    }
+
+    function generateMainLevel(lvl) {
+        let temp = [];
+        for (let i = 800; i < lvl.length; i += 400) {
+            if (Math.random() < 0.3) temp.push({ type: 'spike', x: i, y: GROUND_Y-40 });
+            else temp.push({ type: 'block', x: i, y: GROUND_Y-40 });
+            
+            // Time Machine Specific: Add Mirror Portals
+            if (lvl.name.includes("TIME MACHINE")) {
+                if (i === 1600 || i === 4800) temp.push({ type: 'mPortal', x: i, y: GROUND_Y-120, color: 'orange' });
+                if (i === 3200 || i === 6400) temp.push({ type: 'mPortal', x: i, y: GROUND_Y-120, color: 'blue' });
+            }
+        }
+        return temp;
+    }
+
+    function update(dt) {
+        if (gameState !== 'PLAYING') return;
+        scrollX -= currentLevel.speed * dt;
+
+        if (player.mode === 'cube') {
+            player.vy += 0.9 * dt;
+            player.rotation += (player.grounded ? 0 : 8) * dt;
+        } else if (player.mode === 'ship') {
+            player.vy += (isHolding ? -0.7 : 0.7) * dt;
+            player.vy *= 0.95;
+            player.rotation = player.vy * 2;
+        } else if (player.mode === 'wave') {
+            player.vy = (isHolding ? -10 : 10) * dt;
+            player.rotation = isHolding ? -45 : 45;
+        }
+
+        player.y += player.vy * dt;
+
+        if (player.y + 40 >= GROUND_Y) {
+            if (player.mode === 'wave') gameState = 'MENU';
+            player.y = GROUND_Y-40; player.vy = 0; player.grounded = true;
+            if (player.mode === 'cube') player.rotation = Math.round(player.rotation/90)*90;
+        } else if (player.y <= CEIL_Y) {
+            if (player.mode !== 'cube') gameState = 'MENU';
+            player.y = CEIL_Y; player.vy = 0;
+        } else player.grounded = false;
+
+        objects.forEach(obj => {
+            const ox = obj.x + scrollX;
+            if (player.x < ox+35 && player.x+40 > ox+5 && player.y < obj.y+35 && player.y+40 > obj.y+5) {
+                if (obj.type === 'spike') gameState = 'MENU';
+                if (obj.type === 'mPortal') isMirrored = (obj.color === 'orange');
+                if (obj.type === 'block') {
+                    if (player.y+40 <= obj.y+15 && player.mode === 'cube') {
+                        player.y = obj.y-40; player.vy = 0; player.grounded = true;
+                    } else gameState = 'MENU';
+                }
+            }
+        });
+    }
+
+    function draw() {
+        ctx.fillStyle = '#050510'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        if (isMirrored) { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
+        
+        ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0, GROUND_Y, canvas.width, 100);
+        ctx.fillRect(0, 0, canvas.width, CEIL_Y);
+
+        if (gameState !== 'MENU') {
+            objects.forEach(obj => {
+                const ox = obj.x + scrollX;
+                if (ox < -100 || ox > canvas.width + 100) return;
+                ctx.fillStyle = obj.type === 'mPortal' ? (obj.color === 'orange' ? '#ffa500' : '#0000ff') : (obj.type === 'spike' ? '#ff4444' : '#eee');
+                if (obj.type === 'spike') {
+                    ctx.beginPath(); ctx.moveTo(ox, obj.y+40); ctx.lineTo(ox+20, obj.y); ctx.lineTo(ox+40, obj.y+40); ctx.fill();
+                } else ctx.fillRect(ox, obj.y, 40, 40);
+            });
+
+            ctx.save();
+            ctx.translate(player.x+20, player.y+20);
+            ctx.rotate(player.rotation * Math.PI / 180);
+            ctx.fillStyle = '#00ffff'; ctx.fillRect(-20, -20, 40, 40);
+            ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.strokeRect(-20, -20, 40, 40);
+            ctx.restore();
+        }
+        ctx.restore();
+
+        if (gameState === 'MENU') {
+            ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.font = 'bold 30px Arial';
+            ctx.fillText('GEOMETRY DASH JS', canvas.width/2, 60);
+            levels.forEach((l, i) => {
+                const x = canvas.width/2 - 150, y = 100 + i*50;
+                l.bounds = { x, y, w: 300, h: 40 };
+                ctx.fillStyle = l.color; ctx.fillRect(x, y, 300, 40);
+                ctx.fillStyle = 'white'; ctx.font = '14px Arial'; ctx.fillText(l.name, x+150, y+25);
+            });
+        }
+        if (gameState === 'EDIT') {
+            ctx.fillStyle = 'white'; ctx.fillText(`Tool: ${selectedType} | S: Save | L: Load | ESC: Menu`, 20, 30);
+        }
+    }
+
+    window.addEventListener('mousedown', (e) => {
+        isHolding = true;
+        if (gameState === 'MENU') {
+            levels.forEach(l => {
+                if (e.clientX > l.bounds.x && e.clientX < l.bounds.x + l.bounds.w && e.clientY > l.bounds.y && e.clientY < l.bounds.y + l.bounds.h) initGame(l);
+            });
+        } else if (player && player.grounded && player.mode === 'cube') player.vy = -16;
+        if (gameState === 'EDIT') {
+            customLevelData.push({ type: selectedType, x: Math.floor((e.clientX - scrollX)/40)*40, y: Math.floor(e.clientY/40)*40 });
+        }
+    });
+    window.addEventListener('mouseup', () => isHolding = false);
+    window.addEventListener('keydown', (e) => {
+        if (e.key === '1') selectedType = 'block';
+        if (e.key === '2') selectedType = 'spike';
+        if (e.key === 's') { localStorage.setItem('gd_custom', JSON.stringify(customLevelData)); alert("Saved!"); }
+        if (e.key === 'l') { customLevelData = JSON.parse(localStorage.getItem('gd_custom') || '[]'); alert("Loaded!"); }
+        if (e.key === 'Escape') gameState = 'MENU';
+    });
+
+    function tick(t) {
+        const dt = Math.min((t - lastTime) / 16.66, 2);
+        lastTime = t;
+        update(dt || 1); draw();
+        requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+})();
