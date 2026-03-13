@@ -1,0 +1,214 @@
+(function() {
+    const oldCanvas = document.querySelector('canvas');
+    if (oldCanvas) oldCanvas.remove();
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    document.body.innerHTML = '';
+    document.body.appendChild(canvas);
+    document.documentElement.style.cssText = 'height:100%; margin:0; overflow:hidden;';
+    document.body.style.cssText = 'height:100%; margin:0; overflow:hidden; background:#000; font-family: "Segoe UI", Arial, sans-serif;';
+    canvas.style.display = 'block';
+
+    const GRID = 40;
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize);
+    resize();
+
+    let GROUND_Y = canvas.height - 100, CEIL_Y = 100;
+    let gameState = 'MENU', customLevelData = [], currentLevel = null;
+    let player, objects = [], scrollX = 0, selectedType = 'block', isHolding = false;
+    let isPractice = false, checkpoints = [], frameCount = 0;
+    let customSpeed = 10, customJump = -17, placementUpsideDown = false;
+
+    const levels = [
+        { name: "1. STEREO MADNESS", mode: 'cube', speed: 9, color: "#0066ff", type: 'main', length: 5000 },
+        { name: "2. BACK ON TRACK", mode: 'cube', speed: 9.5, color: "#ff9900", type: 'main', length: 5500 },
+        { name: "3. POLARGEIST", mode: 'cube', speed: 10, color: "#cc00ff", type: 'main', length: 6000 },
+        { name: "4. DRY OUT", mode: 'cube', speed: 10.5, color: "#ff4444", type: 'main', length: 6500 },
+        { name: "5. BASE AFTER BASE", mode: 'cube', speed: 11, color: "#00ff88", type: 'main', length: 7000 },
+        { name: "PLAY CUSTOM", color: "#4ecca3", type: 'custom' },
+        { name: "OPEN EDITOR", color: "#444", type: 'editor' }
+    ];
+
+    function initGame(lvl) {
+        GROUND_Y = canvas.height - 100;
+        currentLevel = lvl;
+        isPractice = false; checkpoints = []; scrollX = 0; frameCount = 0;
+        player = { x: 150, y: GROUND_Y-40, size: 40, vy: 0, gravity: 0.9, gDir: 1, 
+                   jumpPower: (lvl.type === 'custom') ? customJump : -17, 
+                   grounded: false, rotation: 0, mode: lvl.mode || 'cube' };
+        
+        objects = (lvl.type === 'main') ? generateMainLevel(lvl) : 
+                  (lvl.type === 'custom') ? JSON.parse(JSON.stringify(customLevelData)) : customLevelData;
+        objects.forEach(o => o.active = true);
+        gameState = (lvl.type === 'editor') ? 'EDIT' : 'PLAYING';
+    }
+
+    function generateMainLevel(lvl) {
+        let temp = [];
+        let isUpsideDown = false;
+        
+        // Specific Logic for Dry Out Start
+        if (lvl.name.includes("DRY OUT")) {
+            temp.push({ type: 'portal', x: 1200, y: GROUND_Y-120, color: 'yellow' });
+        }
+
+        for (let i = 800; i < lvl.length; i += 450) {
+            const r = Math.random();
+            
+            // Toggle gravity zones for Dry Out
+            if (lvl.name.includes("DRY OUT")) {
+                if (i > 1200 && i < 4000) isUpsideDown = true;
+                else if (i >= 4000 && i < 4200) {
+                    temp.push({ type: 'portal', x: i, y: CEIL_Y+40, color: 'blue' });
+                    isUpsideDown = false;
+                } else isUpsideDown = false;
+            }
+
+            // Skip spawning objects directly on top of the Dry Out transition portal
+            if (lvl.name.includes("DRY OUT") && i > 1150 && i < 1250) continue;
+
+            if (r < 0.4) temp.push({ type: 'spike', x: i, y: isUpsideDown ? CEIL_Y : GROUND_Y-40, flipped: isUpsideDown });
+            else if (r < 0.6) temp.push({ type: 'block', x: i, y: isUpsideDown ? CEIL_Y : GROUND_Y-40 });
+            
+            // Level specific interactions
+            if (lvl.name.includes("BACK ON TRACK") && r > 0.8) temp.push({ type: 'pad', x: i, y: GROUND_Y-10 });
+            if (lvl.name.includes("POLARGEIST") && r > 0.8) temp.push({ type: 'orb', x: i, y: GROUND_Y-150, active: true });
+        }
+        return temp;
+    }
+
+    function jump() {
+        if (gameState !== 'PLAYING') return;
+        let orbHit = false;
+        objects.forEach(obj => {
+            if (obj.type === 'orb' && obj.active) {
+                const ox = obj.x + scrollX;
+                if (Math.sqrt((player.x+20-(ox+20))**2 + (player.y+20-(obj.y+20))**2) < 85) {
+                    player.vy = -17 * player.gDir; obj.active = false; orbHit = true;
+                }
+            }
+        });
+        if (!orbHit && player.grounded && player.mode === 'cube') {
+            player.vy = player.jumpPower * player.gDir; player.grounded = false;
+        }
+    }
+
+    function update() {
+        if (gameState !== 'PLAYING') return;
+        scrollX -= (currentLevel.type === 'custom') ? customSpeed : currentLevel.speed;
+        frameCount++;
+        player.vy += 0.9 * player.gDir;
+        player.y += player.vy;
+
+        if (player.gDir === 1 && player.y + 40 >= GROUND_Y) { player.y = GROUND_Y-40; player.vy = 0; player.grounded = true; }
+        else if (player.gDir === -1 && player.y <= CEIL_Y) { player.y = CEIL_Y; player.vy = 0; player.grounded = true; }
+        else player.grounded = false;
+
+        if (player.y < -150 || player.y > canvas.height + 150) handleDeath();
+
+        objects.forEach((obj) => {
+            const ox = obj.x + scrollX;
+            if (player.x < ox+32 && player.x+40 > ox+8 && player.y < obj.y+35 && player.y+40 > obj.y+5) {
+                if (obj.type === 'spike') handleDeath();
+                if (obj.type === 'portal') player.gDir = (obj.color === 'yellow') ? -1 : 1;
+                if (obj.type === 'pad') { player.vy = -26 * player.gDir; player.grounded = false; }
+                if (obj.type === 'gpad') { player.gDir *= -1; player.vy = 5 * player.gDir; player.grounded = false; }
+                if (obj.type === 'block') {
+                    const topHit = player.gDir === 1 ? (player.y+40 <= obj.y+18) : (player.y >= obj.y+22);
+                    if (topHit) { player.y = player.gDir === 1 ? obj.y-40 : obj.y+40; player.vy = 0; player.grounded = true; }
+                    else handleDeath();
+                }
+            }
+        });
+        player.rotation = player.grounded ? Math.round(player.rotation/90)*90 : player.rotation+8*player.gDir;
+        if (isPractice && frameCount % 120 === 0) checkpoints.push({ scrollX, y: player.y, gDir: player.gDir });
+    }
+
+    function handleDeath() {
+        if (isPractice && checkpoints.length > 0) {
+            const cp = checkpoints[checkpoints.length-1];
+            scrollX = cp.scrollX; player.y = cp.y; player.gDir = cp.gDir; player.vy = 0;
+            objects.forEach(o => o.active = true);
+        } else gameState = 'MENU';
+    }
+
+    function draw() {
+        ctx.fillStyle = '#050510'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0, GROUND_Y, canvas.width, 100);
+        ctx.fillRect(0, 0, canvas.width, CEIL_Y);
+        ctx.strokeStyle = '#00ffff'; ctx.strokeRect(-5, GROUND_Y, canvas.width+10, 2);
+
+        if (gameState === 'MENU') {
+            ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.font = 'bold 36px Arial';
+            ctx.fillText('GD HUB', canvas.width/2, 60);
+            const btnW = 300, btnH = 50, gap = 20;
+            const startX = canvas.width/2 - btnW - gap/2;
+            const startY = 120;
+            levels.forEach((l, i) => {
+                const col = i % 2; const row = Math.floor(i / 2);
+                const x = startX + col * (btnW + gap); const y = startY + row * (btnH + gap);
+                l.bounds = { x, y, w: btnW, h: btnH };
+                ctx.fillStyle = l.color; ctx.fillRect(x, y, btnW, btnH);
+                ctx.fillStyle = 'white'; ctx.font = 'bold 16px Arial'; ctx.fillText(l.name, x + btnW/2, y + btnH/2 + 6);
+            });
+        } else {
+            if (gameState === 'EDIT') {
+                ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(15, 15, 550, 100);
+                ctx.strokeStyle = '#00ffff'; ctx.strokeRect(15, 15, 550, 100);
+                ctx.fillStyle = 'white'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left';
+                ctx.fillText(`TOOLS: 1:Block 2:Spike 3:Orb 4:JumpPad 6:GravPad | 5:DEL | U:Flip`, 30, 40);
+                ctx.fillText(`S:Speed (${customSpeed}) J:Jump (${Math.abs(customJump)}) | ESC: Menu`, 30, 65);
+                ctx.fillStyle = '#a020f0'; ctx.fillText(`SELECTED: ${selectedType.toUpperCase()}`, 30, 90);
+            }
+            objects.forEach(obj => {
+                const x = obj.x + scrollX;
+                if (obj.type === 'spike') {
+                    ctx.fillStyle = '#ff4444'; ctx.beginPath();
+                    if (obj.flipped) { ctx.moveTo(x, obj.y); ctx.lineTo(x+20, obj.y+40); ctx.lineTo(x+40, obj.y); }
+                    else { ctx.moveTo(x, obj.y+40); ctx.lineTo(x+20, obj.y); ctx.lineTo(x+40, obj.y+40); }
+                    ctx.fill();
+                } else if (obj.type === 'block') {
+                    ctx.fillStyle = '#111'; ctx.strokeStyle = '#00ffff'; ctx.fillRect(x, obj.y, 40, 40); ctx.strokeRect(x, obj.y, 40, 40);
+                } else if (obj.type === 'gpad') {
+                    ctx.fillStyle = '#a020f0'; ctx.fillRect(x+5, obj.y+32, 30, 8);
+                } else if (obj.type === 'portal') {
+                    ctx.fillStyle = obj.color === 'yellow' ? '#ffff00' : '#00aaff'; ctx.globalAlpha = 0.5; ctx.fillRect(x+10, obj.y-20, 20, 80); ctx.globalAlpha = 1;
+                } else if (obj.type === 'orb') {
+                    ctx.beginPath(); ctx.arc(x+20, obj.y+20, 15, 0, Math.PI*2); ctx.strokeStyle = '#ffff00'; ctx.lineWidth=3; ctx.stroke();
+                } else if (obj.type === 'pad') {
+                    ctx.fillStyle = '#ffff00'; ctx.fillRect(x+5, obj.y+32, 30, 8);
+                }
+            });
+            ctx.save(); ctx.translate(player.x+20, player.y+20); ctx.rotate(player.rotation * Math.PI/180);
+            ctx.fillStyle = '#00ffff'; ctx.fillRect(-20, -20, 40, 40); ctx.restore();
+        }
+        update(); requestAnimationFrame(draw);
+    }
+
+    window.onmousedown = (e) => {
+        isHolding = true;
+        if (gameState === 'MENU') {
+            levels.forEach(l => { if (l.bounds && e.clientX > l.bounds.x && e.clientX < l.bounds.x + l.bounds.w && e.clientY > l.bounds.y && e.clientY < l.bounds.y + l.bounds.h) initGame(l); });
+        } else if (gameState === 'EDIT') {
+            const gx = Math.floor(e.clientX/GRID)*GRID, gy = GROUND_Y - (Math.ceil((GROUND_Y - e.clientY) / GRID) * GRID);
+            if (selectedType === 'DELETE') customLevelData = customLevelData.filter(o => !(o.x === gx && o.y === gy));
+            else if (e.clientY < GROUND_Y) customLevelData.push({ type: selectedType, x: gx, y: gy, flipped: placementUpsideDown, active: true });
+        } else jump();
+    };
+
+    window.onmouseup = () => isHolding = false;
+    window.onkeydown = (e) => {
+        const keys = {'1':'block', '2':'spike', '3':'orb', '4':'pad', '5':'DELETE', '6':'gpad'};
+        if (keys[e.key]) selectedType = keys[e.key];
+        if (e.key.toLowerCase() === 'u') placementUpsideDown = !placementUpsideDown;
+        if (e.key.toLowerCase() === 's') customSpeed = customSpeed >= 15 ? 9 : customSpeed + 3;
+        if (e.key.toLowerCase() === 'j') customJump = customJump <= -21 ? -14 : customJump - 3;
+        if (e.key.toLowerCase() === 'p' && gameState === 'PLAYING') isPractice = !isPractice;
+        if (e.code === 'Space') { isHolding = true; jump(); }
+        if (e.key === 'Escape') gameState = 'MENU';
+    };
+    window.onkeyup = (e) => { if (e.code === 'Space') isHolding = false; };
+    draw();
+})();
