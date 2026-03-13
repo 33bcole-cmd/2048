@@ -1,0 +1,97 @@
+(() => {
+  if (window.__DEVTOOLS_2048__) {
+    console.warn("2048 overlay already running.");
+    return;
+  }
+  window.__DEVTOOLS_2048__ = true;
+
+  const SIZE = 4;
+  let board = Array.from({length: SIZE}, () => Array(SIZE).fill(0));
+  let score = 0;
+  let best = Number(localStorage.getItem("devtools-2048-best") || 0);
+  let prevBoard = null;
+  let prevScore = 0;
+
+  // ==== Overlay DOM ====
+  const host = document.createElement("div");
+  Object.assign(host.style,{
+    position:"fixed",right:"20px",bottom:"20px",
+    width:"320px",background:"#1f1f1f",border:"2px solid #444",
+    borderRadius:"12px",padding:"10px",color:"#fff",
+    fontFamily:"system-ui,sans-serif",zIndex:2147483647,userSelect:"none"
+  });
+  host.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <strong>2048 (DevTools)</strong>
+      <button id="closeBtn" style="all:unset;cursor:pointer;background:#444;padding:2px 6px;border-radius:4px;">✖</button>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+      <div>Score: <span id="score">0</span></div>
+      <div>Best: <span id="best">${best}</span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(${SIZE},1fr);gap:8px;" id="grid"></div>
+    <div style="margin-top:6px;font-size:12px;opacity:.7;text-align:center;">
+      Arrows/WASD to move • U=Undo • Esc=Quit
+    </div>
+  `;
+  const grid=host.querySelector("#grid");
+  const scoreEl=host.querySelector("#score");
+  const bestEl=host.querySelector("#best");
+  const cells=[];
+  for(let i=0;i<SIZE*SIZE;i++){
+    const cell=document.createElement("div");
+    Object.assign(cell.style,{
+      background:"#2e2e2e",borderRadius:"6px",height:"60px",
+      display:"flex",alignItems:"center",justifyContent:"center",
+      fontWeight:"bold",fontSize:"20px",transition:"background .2s"
+    });
+    grid.appendChild(cell);cells.push(cell);
+  }
+  document.body.appendChild(host);
+  host.querySelector("#closeBtn").onclick=close;
+
+  // ==== Helpers ====
+  const rand=n=>Math.floor(Math.random()*n);
+  const deepCopy=b=>b.map(r=>r.slice());
+  const emptyCells=()=>{const arr=[];for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++)if(!board[r][c])arr.push([r,c]);return arr};
+  const addTile=()=>{const e=emptyCells();if(!e.length)return;const[r,c]=e[rand(e.length)];board[r][c]=Math.random()<0.9?2:4};
+  const slide=row=>{
+    let arr=row.filter(v=>v!==0);
+    for(let i=0;i<arr.length-1;i++){if(arr[i]===arr[i+1]){arr[i]*=2;score+=arr[i];arr[i+1]=0}}
+    arr=arr.filter(v=>v!==0);
+    while(arr.length<SIZE)arr.push(0);
+    return arr;
+  };
+  const moveLeft=()=>{let moved=false;for(let r=0;r<SIZE;r++){const newRow=slide(board[r]);if(board[r].toString()!==newRow.toString())moved=true;board[r]=newRow}if(moved)addTile();return moved};
+  const moveRight=()=>{let moved=false;for(let r=0;r<SIZE;r++){let row=board[r].slice().reverse();row=slide(row).reverse();if(board[r].toString()!==row.toString())moved=true;board[r]=row}if(moved)addTile();return moved};
+  const moveUp=()=>{let moved=false;for(let c=0;c<SIZE;c++){let col=[];for(let r=0;r<SIZE;r++)col.push(board[r][c]);let newCol=slide(col);for(let r=0;r<SIZE;r++){if(board[r][c]!==newCol[r])moved=true;board[r][c]=newCol[r]}}if(moved)addTile();return moved};
+  const moveDown=()=>{let moved=false;for(let c=0;c<SIZE;c++){let col=[];for(let r=0;r<SIZE;r++)col.push(board[r][c]);col=col.reverse();let newCol=slide(col).reverse();for(let r=0;r<SIZE;r++){if(board[r][c]!==newCol[r])moved=true;board[r][c]=newCol[r]}}if(moved)addTile();return moved};
+  const gameOver=()=>{if(emptyCells().length)return false;for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++){const v=board[r][c];if(r+1<SIZE&&board[r+1][c]===v)return false;if(c+1<SIZE&&board[r][c+1]===v)return false}return true};
+  const colors={0:["#2e2e2e","#aaa"],2:["#eee4da","#776e65"],4:["#ede0c8","#776e65"],8:["#f2b179","#f9f6f2"],16:["#f59563","#f9f6f2"],32:["#f67c5f","#f9f6f2"],64:["#f65e3b","#f9f6f2"],128:["#edcf72","#f9f6f2"],256:["#edcc61","#f9f6f2"],512:["#edc850","#f9f6f2"],1024:["#edc53f","#f9f6f2"],2048:["#edc22e","#f9f6f2"]};
+
+  function setScore(s){score=s;scoreEl.textContent=score;if(score>best){best=score;bestEl.textContent=best;localStorage.setItem("devtools-2048-best",best)}}
+  function render(){setScore(score);for(let r=0;r<SIZE;r++){for(let c=0;c<SIZE;c++){const v=board[r][c];const cell=cells[r*SIZE+c];const [bg,fg]=colors[v]||["#3c3a32","#fff"];cell.style.background=bg;cell.style.color=fg;cell.textContent=v||""}}}
+  function saveUndo(){prevBoard=deepCopy(board);prevScore=score}
+  function undo(){if(!prevBoard)return;board=deepCopy(prevBoard);setScore(prevScore);render();prevBoard=null}
+
+  // ==== Controls ====
+  function handleKey(e){
+    let moved=false;
+    switch(e.key.toLowerCase()){
+      case"arrowleft":case"a":saveUndo();moved=moveLeft();break;
+      case"arrowright":case"d":saveUndo();moved=moveRight();break;
+      case"arrowup":case"w":saveUndo();moved=moveUp();break;
+      case"arrowdown":case"s":saveUndo();moved=moveDown();break;
+      case"u":undo();return;
+      case"escape":close();return;
+    }
+    if(moved)render();
+    if(gameOver()){render();scoreEl.textContent+=" • GAME OVER";window.removeEventListener("keydown",handleKey)}
+  }
+  window.addEventListener("keydown",handleKey);
+
+  function close(){window.removeEventListener("keydown",handleKey);host.remove();window.__DEVTOOLS_2048__=false}
+
+  // ==== Init ====
+  addTile();addTile();render();
+})();
